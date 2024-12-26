@@ -1,0 +1,262 @@
+// prisma/schema.prisma
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+  previewFeatures = ["fullTextSearch"]
+}
+
+// User Management
+model User {
+  id                String          @id @default(cuid())
+  email             String          @unique
+  name              String
+  password          String
+  role              Role           @default(STAFF)
+  department        String?
+  phoneNumber       String?
+  isActive          Boolean        @default(true)
+  lastLoginAt       DateTime?
+  failedLoginAttempts Int          @default(0)
+  passwordChangedAt DateTime?
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+  stockMovements    StockMovement[]
+  auditLogs         AuditLog[]
+  notifications     Notification[]
+  createdItems      Item[]         @relation("ItemCreator")
+  modifiedItems     Item[]         @relation("ItemModifier")
+
+  @@index([email])
+  @@index([role])
+  @@index([department])
+}
+
+enum Role {
+  ADMIN
+  MANAGER
+  STAFF
+  READONLY
+}
+
+// Category Management
+model Category {
+  id              String    @id @default(cuid())
+  name            String    @unique
+  description     String?
+  slug            String    @unique
+  parentId        String?   // For hierarchical categories
+  parent          Category? @relation("CategoryHierarchy", fields: [parentId], references: [id])
+  children        Category[] @relation("CategoryHierarchy")
+  items           Item[]
+  isActive        Boolean   @default(true)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  metadata        Json?     // Flexible metadata storage
+
+  @@index([name])
+  @@index([parentId])
+  @@index([isActive])
+}
+
+// Supplier Management
+model Supplier {
+  id              String    @id @default(cuid())
+  name            String
+  code            String    @unique
+  contactPerson   String?
+  email           String?
+  phone           String?
+  address         String?
+  taxId           String?
+  paymentTerms    String?
+  rating          Int?      @db.SmallInt
+  isActive        Boolean   @default(true)
+  items           Item[]
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@index([code])
+  @@index([isActive])
+}
+
+// Inventory Items
+model Item {
+  id                String         @id @default(cuid())
+  name              String
+  slug              String        @unique
+  sku               String        @unique
+  barcode           String?       @unique
+  description       String?
+  categoryId        String
+  category          Category      @relation(fields: [categoryId], references: [id])
+  supplierId        String
+  supplier          Supplier      @relation(fields: [supplierId], references: [id])
+  currentStock      Int          @default(0)
+  minimumStock      Int          @default(0)
+  maximumStock      Int?
+  reorderPoint      Int?
+  location          Location?     @relation(fields: [locationId], references: [id])
+  locationId        String?
+  unitPrice         Decimal      @db.Decimal(10, 2)
+  costPrice         Decimal      @db.Decimal(10, 2)
+  modelCompatibility String[]
+  weight            Decimal?     @db.Decimal(10, 2)
+  dimensions        Json?        // {length, width, height}
+  status            ItemStatus   @default(ACTIVE)
+  stockMovements    StockMovement[]
+  images            ItemImage[]
+  tags              String[]
+  metadata          Json?
+  createdById       String
+  createdBy         User        @relation("ItemCreator", fields: [createdById], references: [id])
+  lastModifiedById  String
+  lastModifiedBy    User        @relation("ItemModifier", fields: [lastModifiedById], references: [id])
+  createdAt         DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
+
+  @@index([sku])
+  @@index([barcode])
+  @@index([categoryId])
+  @@index([supplierId])
+  @@index([status])
+  @@index([tags])
+}
+
+enum ItemStatus {
+  ACTIVE
+  DISCONTINUED
+  OUT_OF_STOCK
+  LOW_STOCK
+  ARCHIVED
+}
+
+// Storage Locations
+model Location {
+  id          String    @id @default(cuid())
+  name        String
+  code        String    @unique
+  type        LocationType
+  capacity    Int?
+  isActive    Boolean   @default(true)
+  items       Item[]
+  parent      Location?  @relation("LocationHierarchy", fields: [parentId], references: [id])
+  parentId    String?
+  children    Location[] @relation("LocationHierarchy")
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  @@index([code])
+  @@index([type])
+}
+
+enum LocationType {
+  WAREHOUSE
+  SHELF
+  BIN
+  ZONE
+}
+
+// Stock Movements
+model StockMovement {
+  id            String    @id @default(cuid())
+  type          MovementType
+  quantity      Int
+  itemId        String
+  item          Item      @relation(fields: [itemId], references: [id])
+  userId        String
+  user          User      @relation(fields: [userId], references: [id])
+  reference     String?   // PO number, SO number, etc.
+  notes         String?
+  unitPrice     Decimal   @db.Decimal(10, 2)
+  totalPrice    Decimal   @db.Decimal(10, 2)
+  status        MovementStatus @default(PENDING)
+  metadata      Json?
+  createdAt     DateTime  @default(now())
+
+  @@index([itemId])
+  @@index([userId])
+  @@index([type])
+  @@index([status])
+  @@index([reference])
+  @@index([createdAt])
+}
+
+enum MovementType {
+  PURCHASE
+  SALE
+  ADJUSTMENT
+  TRANSFER
+  RETURN
+  WRITE_OFF
+}
+
+enum MovementStatus {
+  PENDING
+  COMPLETED
+  CANCELLED
+  FAILED
+}
+
+// Item Images
+model ItemImage {
+  id        String    @id @default(cuid())
+  itemId    String
+  item      Item      @relation(fields: [itemId], references: [id])
+  url       String
+  isPrimary Boolean   @default(false)
+  order     Int       @default(0)
+  metadata  Json?
+  createdAt DateTime  @default(now())
+
+  @@index([itemId])
+}
+
+// Audit Logging
+model AuditLog {
+  id          String    @id @default(cuid())
+  action      String
+  entityType  String
+  entityId    String
+  userId      String
+  user        User      @relation(fields: [userId], references: [id])
+  details     Json?
+  ipAddress   String?
+  userAgent   String?
+  createdAt   DateTime  @default(now())
+
+  @@index([userId])
+  @@index([entityType, entityId])
+  @@index([action])
+  @@index([createdAt])
+}
+
+// Notifications
+model Notification {
+  id          String    @id @default(cuid())
+  userId      String
+  user        User      @relation(fields: [userId], references: [id])
+  type        NotificationType
+  title       String
+  message     String
+  isRead      Boolean   @default(false)
+  metadata    Json?
+  createdAt   DateTime  @default(now())
+  readAt      DateTime?
+
+  @@index([userId])
+  @@index([type])
+  @@index([isRead])
+  @@index([createdAt])
+}
+
+enum NotificationType {
+  LOW_STOCK
+  STOCK_MOVEMENT
+  SYSTEM
+  PRICE_CHANGE
+  APPROVAL_REQUIRED
+}
